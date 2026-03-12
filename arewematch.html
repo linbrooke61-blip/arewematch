@@ -15,33 +15,14 @@
   <!-- 引入 Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
 
+  <!-- 【核心新增】：引入 html2canvas 库，用于所见即所得的图片渲染 -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+
   <style>
-    /* 【核心修复】强制声明跨平台中文字体栈，防止 PDF 渲染时丢弃中文字符 */
     body {
       font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", STHeiti, "Microsoft YaHei", Tahoma, Simsun, sans-serif !important;
     }
 
-    /* 严格的打印保护样式 */
-    @media print {
-      body { 
-        background-color: white !important;
-        /* 再次强调打印时的中文字体，确保 PDF 引擎能找到字形库 */
-        font-family: "PingFang SC", "Microsoft YaHei", "SimHei", sans-serif !important;
-        -webkit-print-color-adjust: exact; 
-        print-color-adjust: exact; 
-      }
-      .print\:hidden { display: none !important; }
-      .print\:shadow-none { box-shadow: none !important; }
-      .print\:border-none { border: none !important; }
-      .print\:text-black { color: black !important; }
-      .print\:bg-transparent { background: transparent !important; }
-      #root { padding: 0 !important; }
-      
-      /* 修复打印时的分页截断问题，确保标题和段落不被强行切断 */
-      h2, h3, h4 { page-break-after: avoid; }
-      p, div { page-break-inside: avoid; }
-    }
-    
     /* 自定义一些动画 */
     @keyframes spin-slow {
       from { transform: rotate(0deg); }
@@ -50,7 +31,7 @@
     .animate-spin-slow { animation: spin-slow 4s linear infinite; }
   </style>
 </head>
-<body class="bg-gradient-to-br from-indigo-50 via-purple-50 to-pink-50 min-h-screen text-slate-800 print:bg-white">
+<body class="bg-gradient-to-br from-indigo-50 via-purple-50 to-pink-50 min-h-screen text-slate-800">
   
   <div id="root"></div>
 
@@ -204,6 +185,9 @@
       const [aiResult, setAiResult] = useState(null);
       const [isAiLoading, setIsAiLoading] = useState(false);
       const [aiError, setAiError] = useState(null);
+      
+      // 新增：判断是否正在渲染图片的状态
+      const [isExporting, setIsExporting] = useState(false);
 
       useEffect(() => {
         localStorage.setItem('deepseek_api_key', apiKey);
@@ -288,7 +272,6 @@
         }, 1500);
       };
 
-      // 解析 Markdown，增强加粗解析的正则稳定性
       const renderMarkdown = (text) => {
         if (!text) return null;
         return text.split('\n').map((line, index) => {
@@ -296,9 +279,9 @@
           if (trimmed.startsWith('### ')) return <h4 key={index} className="text-lg font-bold mt-6 mb-2 text-indigo-800">{parseBold(trimmed.slice(4))}</h4>;
           if (trimmed.startsWith('## ')) return <h3 key={index} className="text-xl font-bold mt-8 mb-3 text-indigo-900">{parseBold(trimmed.slice(3))}</h3>;
           if (trimmed.startsWith('# ')) return <h2 key={index} className="text-2xl font-black mt-8 mb-4 text-indigo-900">{parseBold(trimmed.slice(2))}</h2>;
-          if (trimmed.match(/^[-*_]{3,}$/)) return <hr key={index} className="my-6 border-indigo-100 print:border-slate-300" />;
+          if (trimmed.match(/^[-*_]{3,}$/)) return <hr key={index} className="my-6 border-indigo-100" />;
           if (trimmed === '') return <div key={index} className="h-2"></div>;
-          return <div key={index} className="mb-2 leading-relaxed text-slate-700 print:text-black">{parseBold(line)}</div>;
+          return <div key={index} className="mb-2 leading-relaxed text-slate-700">{parseBold(line)}</div>;
         });
       };
 
@@ -306,19 +289,49 @@
         const parts = text.split(/(\*\*.*?\*\*)/g);
         return parts.map((part, i) => {
           if (part.startsWith('**') && part.endsWith('**')) {
-            return <strong key={i} className="font-bold text-indigo-700 print:text-black">{part.slice(2, -2)}</strong>;
+            return <strong key={i} className="font-bold text-indigo-700">{part.slice(2, -2)}</strong>;
           }
           return part;
         });
       };
 
-      // GitHub Pages 环境原生支持 window.print()
-      const handleExportPDF = () => {
-        // 给渲染一点时间，确保状态折叠被打开
+      // 【核心替换】：不再使用浏览器的 PDF 打印，改用 html2canvas 渲染为超清 PNG
+      const handleExportImage = () => {
+        if (isExporting) return;
+        
+        // 1. 展开所有折叠面板，并隐藏不想被截图的按钮
         setShowDetails(true);
+        setIsExporting(true);
+        
+        // 2. 留出 500 毫秒让 React 完成展开动画
         setTimeout(() => {
-          window.print();
-        }, 100);
+          const reportElement = document.getElementById('report-container');
+          
+          if (window.html2canvas && reportElement) {
+            window.html2canvas(reportElement, {
+              scale: 2, // 提高 2 倍分辨率，保证图片清晰度
+              useCORS: true,
+              backgroundColor: '#ffffff'
+            }).then(canvas => {
+              // 3. 将 Canvas 转换为图片并触发下载
+              const imgData = canvas.toDataURL('image/png');
+              const link = document.createElement('a');
+              link.download = `多维缘分报告_${person1.name}_${person2.name}.png`;
+              link.href = imgData;
+              link.click();
+              
+              // 4. 恢复 UI 状态
+              setIsExporting(false);
+            }).catch(err => {
+              console.error('截图失败:', err);
+              alert("渲染图片失败，请检查浏览器设置。");
+              setIsExporting(false);
+            });
+          } else {
+            alert("渲染引擎尚未加载完毕，请稍后再试。");
+            setIsExporting(false);
+          }
+        }, 500); 
       };
 
       const getScoreColor = (score) => {
@@ -337,9 +350,9 @@
       };
 
       return (
-        <div className="p-4 md:p-8 max-w-4xl mx-auto space-y-8 print:p-0 print:space-y-4 print:max-w-none">
+        <div className="p-4 md:p-8 max-w-4xl mx-auto space-y-8">
           {/* Header */}
-          <div className="text-center space-y-2 print:hidden">
+          <div className="text-center space-y-2">
             <div className="inline-flex items-center justify-center p-3 bg-white rounded-full shadow-sm mb-4">
               <IconCompass className="w-8 h-8 text-indigo-500 animate-spin-slow" />
             </div>
@@ -351,7 +364,7 @@
           </div>
 
           {/* Input Cards */}
-          <div className="grid md:grid-cols-2 gap-6 print:hidden">
+          <div className="grid md:grid-cols-2 gap-6">
             {/* Person 1 */}
             <div className="bg-white/80 backdrop-blur-sm p-6 rounded-2xl shadow-xl border border-white/50">
               <h2 className="text-xl font-semibold mb-4 flex items-center gap-2 text-indigo-700">
@@ -402,7 +415,7 @@
           </div>
 
           {/* AI Config */}
-          <div className="bg-white/80 backdrop-blur-sm p-5 rounded-2xl shadow-md border border-indigo-100 flex flex-col md:flex-row gap-4 items-center justify-between print:hidden">
+          <div className="bg-white/80 backdrop-blur-sm p-5 rounded-2xl shadow-md border border-indigo-100 flex flex-col md:flex-row gap-4 items-center justify-between">
             <div className="flex items-center gap-3">
               <div className="bg-indigo-100 p-2 rounded-full"><IconBot className="w-5 h-5 text-indigo-600" /></div>
               <div>
@@ -417,7 +430,7 @@
           </div>
 
           {/* Calculate Button */}
-          <div className="flex justify-center print:hidden">
+          <div className="flex justify-center">
             <button onClick={handleCalculate} disabled={isCalculating} className={`relative overflow-hidden group px-8 py-4 rounded-full font-bold text-white text-lg shadow-lg transition-all duration-300 ${isCalculating ? 'bg-slate-400 cursor-not-allowed' : 'bg-gradient-to-r from-indigo-500 to-pink-500 hover:shadow-pink-500/30 hover:scale-105 active:scale-95'}`}>
               {isCalculating ? (
                 <span className="flex items-center gap-2"><IconRefresh className="w-5 h-5 animate-spin" />正在推演时空数据...</span>
@@ -427,59 +440,64 @@
             </button>
           </div>
 
-          {/* Results */}
+          {/* Results - 增加了 id="report-container" 以便截图库精准截取 */}
           {result && (
-            <div className="bg-white rounded-3xl shadow-2xl overflow-hidden border border-slate-100 print:shadow-none print:border-none print:rounded-none">
+            <div id="report-container" className="bg-white rounded-3xl shadow-2xl overflow-hidden border border-slate-100">
               
-              <div className="bg-gradient-to-br from-slate-900 to-indigo-900 text-white p-8 text-center relative print:bg-white print:text-slate-900 print:border-b print:border-slate-300">
-                <IconSparkles className="absolute top-4 left-4 text-yellow-400/30 w-12 h-12 print:hidden" />
-                <IconStar className="absolute bottom-4 right-4 text-pink-400/30 w-16 h-16 print:hidden" />
+              <div className="bg-gradient-to-br from-slate-900 to-indigo-900 text-white p-8 text-center relative">
+                <IconSparkles className="absolute top-4 left-4 text-yellow-400/30 w-12 h-12" />
+                <IconStar className="absolute bottom-4 right-4 text-pink-400/30 w-16 h-16" />
                 
-                <div className="absolute top-4 right-4 print:hidden">
-                  <button onClick={handleExportPDF} className="flex items-center gap-2 px-4 py-2 bg-white/10 hover:bg-white/20 backdrop-blur-md rounded-full text-white text-sm font-medium transition-colors border border-white/20">
-                    <IconDownload className="w-4 h-4" />保存报告
-                  </button>
-                </div>
+                {/* 截图时隐藏这个保存按钮 */}
+                {!isExporting && (
+                  <div className="absolute top-4 right-4">
+                    <button onClick={handleExportImage} className="flex items-center gap-2 px-4 py-2 bg-white/10 hover:bg-white/20 backdrop-blur-md rounded-full text-white text-sm font-medium transition-colors border border-white/20">
+                      <IconDownload className="w-4 h-4" />生成长图
+                    </button>
+                  </div>
+                )}
 
-                <p className="text-indigo-200 font-medium mb-2 tracking-widest text-sm uppercase print:text-slate-500">综合匹配指数</p>
+                <p className="text-indigo-200 font-medium mb-2 tracking-widest text-sm uppercase">综合匹配指数</p>
                 <div className="flex items-center justify-center gap-4">
-                  <div className="text-2xl font-light text-slate-300 print:text-slate-700">{person1.name}</div>
-                  <div className="text-6xl font-black bg-clip-text text-transparent bg-gradient-to-r from-pink-400 to-yellow-300 print:text-indigo-700 print:bg-none print:bg-transparent">{result.finalScore}%</div>
-                  <div className="text-2xl font-light text-slate-300 print:text-slate-700">{person2.name}</div>
+                  <div className="text-2xl font-light text-slate-300">{person1.name}</div>
+                  <div className="text-6xl font-black bg-clip-text text-transparent bg-gradient-to-r from-pink-400 to-yellow-300">{result.finalScore}%</div>
+                  <div className="text-2xl font-light text-slate-300">{person2.name}</div>
                 </div>
-                <p className="mt-4 text-xl font-medium text-pink-100 print:text-slate-800 print:font-bold">"{getScoreMessage(result.finalScore)}"</p>
+                <p className="mt-4 text-xl font-medium text-pink-100">"{getScoreMessage(result.finalScore)}"</p>
               </div>
 
-              <div className="p-6 print:p-0 print:mt-6">
-                <button onClick={() => setShowDetails(!showDetails)} className="w-full flex items-center justify-between p-4 bg-slate-50 rounded-2xl text-slate-700 hover:bg-slate-100 transition-colors print:hidden">
-                  <span className="font-semibold text-lg flex items-center gap-2"><IconCompass className="w-5 h-5" />查看维度分析报告</span>
-                  {showDetails ? <IconUp className="w-5 h-5" /> : <IconDown className="w-5 h-5" />}
-                </button>
+              <div className="p-6">
+                {!isExporting && (
+                  <button onClick={() => setShowDetails(!showDetails)} className="w-full flex items-center justify-between p-4 bg-slate-50 rounded-2xl text-slate-700 hover:bg-slate-100 transition-colors">
+                    <span className="font-semibold text-lg flex items-center gap-2"><IconCompass className="w-5 h-5" />查看维度分析报告</span>
+                    {showDetails ? <IconUp className="w-5 h-5" /> : <IconDown className="w-5 h-5" />}
+                  </button>
+                )}
 
-                {(showDetails || true) && (
-                  <div className={`mt-4 grid gap-4 ${!showDetails ? 'print:grid hidden' : ''}`}>
-                    <div className="p-5 rounded-2xl border border-slate-100 bg-white shadow-sm flex flex-col md:flex-row gap-4 items-center print:border print:shadow-none print:border-slate-300">
+                {(showDetails || isExporting) && (
+                  <div className="mt-4 grid gap-4">
+                    <div className="p-5 rounded-2xl border border-slate-100 bg-white shadow-sm flex flex-col md:flex-row gap-4 items-center">
                       <div className="w-20 h-20 rounded-full bg-blue-50 flex items-center justify-center flex-shrink-0"><span className={`text-2xl font-black ${getScoreColor(result.mbti.score)}`}>{result.mbti.score}</span></div>
                       <div className="flex-1 text-center md:text-left">
-                        <h3 className="font-bold text-slate-800">心理学维度 (MBTI) <span className="text-xs px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full ml-2 print:border print:border-blue-300">权重 35%</span></h3>
-                        <p className="text-sm text-slate-500 mt-1"><span className="font-semibold text-indigo-600 print:text-black">{result.mbti.p1}</span> 与 <span className="font-semibold text-pink-600 print:text-black">{result.mbti.p2}</span></p>
-                        <p className="text-slate-600 mt-2 print:text-black">{result.mbti.desc}</p>
+                        <h3 className="font-bold text-slate-800">心理学维度 (MBTI) <span className="text-xs px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full ml-2">权重 35%</span></h3>
+                        <p className="text-sm text-slate-500 mt-1"><span className="font-semibold text-indigo-600">{result.mbti.p1}</span> 与 <span className="font-semibold text-pink-600">{result.mbti.p2}</span></p>
+                        <p className="text-slate-600 mt-2">{result.mbti.desc}</p>
                       </div>
                     </div>
-                    <div className="p-5 rounded-2xl border border-slate-100 bg-white shadow-sm flex flex-col md:flex-row gap-4 items-center print:border print:shadow-none print:border-slate-300">
+                    <div className="p-5 rounded-2xl border border-slate-100 bg-white shadow-sm flex flex-col md:flex-row gap-4 items-center">
                       <div className="w-20 h-20 rounded-full bg-purple-50 flex items-center justify-center flex-shrink-0"><span className={`text-2xl font-black ${getScoreColor(result.zodiac.score)}`}>{result.zodiac.score}</span></div>
                       <div className="flex-1 text-center md:text-left">
-                        <h3 className="font-bold text-slate-800">占星学维度 (四象星座) <span className="text-xs px-2 py-0.5 bg-purple-100 text-purple-700 rounded-full ml-2 print:border print:border-purple-300">权重 25%</span></h3>
-                        <p className="text-sm text-slate-500 mt-1"><span className="font-semibold text-indigo-600 print:text-black">{result.zodiac.p1.name}</span> 与 <span className="font-semibold text-pink-600 print:text-black">{result.zodiac.p2.name}</span></p>
-                        <p className="text-slate-600 mt-2 print:text-black">{result.zodiac.desc}</p>
+                        <h3 className="font-bold text-slate-800">占星学维度 (四象星座) <span className="text-xs px-2 py-0.5 bg-purple-100 text-purple-700 rounded-full ml-2">权重 25%</span></h3>
+                        <p className="text-sm text-slate-500 mt-1"><span className="font-semibold text-indigo-600">{result.zodiac.p1.name}</span> 与 <span className="font-semibold text-pink-600">{result.zodiac.p2.name}</span></p>
+                        <p className="text-slate-600 mt-2">{result.zodiac.desc}</p>
                       </div>
                     </div>
-                    <div className="p-5 rounded-2xl border border-slate-100 bg-white shadow-sm flex flex-col md:flex-row gap-4 items-center print:border print:shadow-none print:border-slate-300">
+                    <div className="p-5 rounded-2xl border border-slate-100 bg-white shadow-sm flex flex-col md:flex-row gap-4 items-center">
                       <div className="w-20 h-20 rounded-full bg-red-50 flex items-center justify-center flex-shrink-0"><span className={`text-2xl font-black ${getScoreColor(result.bazi.score)}`}>{result.bazi.score}</span></div>
                       <div className="flex-1 text-center md:text-left">
-                        <h3 className="font-bold text-slate-800">东方玄学 (严谨地支) <span className="text-xs px-2 py-0.5 bg-red-100 text-red-700 rounded-full ml-2 print:border print:border-red-300">权重 25%</span></h3>
-                        <p className="text-sm text-slate-500 mt-1">属相 <span className="font-semibold text-indigo-600 print:text-black">{result.bazi.p1.animal}</span> 与 属相 <span className="font-semibold text-pink-600 print:text-black">{result.bazi.p2.animal}</span></p>
-                        <p className="text-slate-600 mt-2 print:text-black">{result.bazi.desc}</p>
+                        <h3 className="font-bold text-slate-800">东方玄学 (严谨地支) <span className="text-xs px-2 py-0.5 bg-red-100 text-red-700 rounded-full ml-2">权重 25%</span></h3>
+                        <p className="text-sm text-slate-500 mt-1">属相 <span className="font-semibold text-indigo-600">{result.bazi.p1.animal}</span> 与 属相 <span className="font-semibold text-pink-600">{result.bazi.p2.animal}</span></p>
+                        <p className="text-slate-600 mt-2">{result.bazi.desc}</p>
                       </div>
                     </div>
                   </div>
@@ -487,25 +505,25 @@
               </div>
               
               {(isAiLoading || aiResult || aiError) && (
-                <div className="p-6 border-t border-slate-100 bg-indigo-50/50 print:bg-white print:p-0 print:mt-8 print:border-none print:pt-4">
+                <div className="p-6 border-t border-slate-100 bg-indigo-50/50">
                   <div className="flex items-center gap-2 mb-4">
-                    <IconBot className="w-6 h-6 text-indigo-600 print:text-slate-800" />
+                    <IconBot className="w-6 h-6 text-indigo-600" />
                     <h3 className="text-lg font-bold text-slate-800">DeepSeek 深度洞察</h3>
                   </div>
-                  <div className="bg-white p-5 rounded-2xl shadow-sm border border-indigo-100/50 print:border-none print:shadow-none print:p-0">
+                  <div className="bg-white p-5 rounded-2xl shadow-sm border border-indigo-100/50">
                     {isAiLoading && (
-                      <div className="flex flex-col items-center justify-center py-8 space-y-3 text-indigo-500 print:hidden">
+                      <div className="flex flex-col items-center justify-center py-8 space-y-3 text-indigo-500">
                         <IconLoader className="w-8 h-8 animate-spin" />
                         <p className="text-sm font-medium animate-pulse">正在推演量子命理关系...</p>
                       </div>
                     )}
-                    {aiError && <div className="p-4 bg-red-50 text-red-600 rounded-xl text-sm print:hidden">{aiError}</div>}
-                    {aiResult && !isAiLoading && <div className="text-slate-800 print:text-black">{renderMarkdown(aiResult)}</div>}
+                    {aiError && <div className="p-4 bg-red-50 text-red-600 rounded-xl text-sm">{aiError}</div>}
+                    {aiResult && !isAiLoading && <div className="text-slate-800">{renderMarkdown(aiResult)}</div>}
                   </div>
                 </div>
               )}
               
-              <div className="p-4 bg-slate-50 text-center text-xs text-slate-400 border-t border-slate-100 print:mt-12 print:bg-transparent print:border-none">
+              <div className="p-4 bg-slate-50 text-center text-xs text-slate-400 border-t border-slate-100">
                 * 研究者注：算法仅供娱乐。立春点采用百年历法回归年测算公式 (Y×D+C-L)。
               </div>
             </div>
