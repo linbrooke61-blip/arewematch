@@ -186,7 +186,6 @@
       const [isAiLoading, setIsAiLoading] = useState(false);
       const [aiError, setAiError] = useState(null);
       
-      // 新增：判断是否正在渲染图片的状态
       const [isExporting, setIsExporting] = useState(false);
 
       useEffect(() => {
@@ -216,7 +215,8 @@
               model: 'deepseek-chat',
               messages: [{ role: 'user', content: prompt }],
               temperature: 0.7,
-              max_tokens: 800
+              // 【核心修复】：大幅提高 max_tokens，防止大模型文本截断导致 Markdown 错乱
+              max_tokens: 2000 
             })
           });
 
@@ -272,21 +272,33 @@
         }, 1500);
       };
 
+      // 【核心修复】：更强大的 Markdown 正则解析器
       const renderMarkdown = (text) => {
         if (!text) return null;
         return text.split('\n').map((line, index) => {
           const trimmed = line.trim();
-          if (trimmed.startsWith('### ')) return <h4 key={index} className="text-lg font-bold mt-6 mb-2 text-indigo-800">{parseBold(trimmed.slice(4))}</h4>;
-          if (trimmed.startsWith('## ')) return <h3 key={index} className="text-xl font-bold mt-8 mb-3 text-indigo-900">{parseBold(trimmed.slice(3))}</h3>;
-          if (trimmed.startsWith('# ')) return <h2 key={index} className="text-2xl font-black mt-8 mb-4 text-indigo-900">{parseBold(trimmed.slice(2))}</h2>;
-          if (trimmed.match(/^[-*_]{3,}$/)) return <hr key={index} className="my-6 border-indigo-100" />;
           if (trimmed === '') return <div key={index} className="h-2"></div>;
-          return <div key={index} className="mb-2 leading-relaxed text-slate-700">{parseBold(line)}</div>;
+
+          // 动态捕获 1-6 级的所有标题 (如 #, ##, ###, ####...)
+          const headerMatch = trimmed.match(/^(#{1,6})\s+(.*)/);
+          if (headerMatch) {
+            const level = headerMatch[1].length;
+            const content = parseBold(headerMatch[2]);
+            if (level === 1) return <h2 key={index} className="text-2xl font-black mt-8 mb-4 text-indigo-900">{content}</h2>;
+            if (level === 2) return <h3 key={index} className="text-xl font-bold mt-8 mb-3 text-indigo-900">{content}</h3>;
+            if (level === 3) return <h4 key={index} className="text-lg font-bold mt-6 mb-2 text-indigo-800">{content}</h4>;
+            return <h5 key={index} className="text-base font-bold mt-4 mb-2 text-indigo-700">{content}</h5>; // 涵盖4、5、6级
+          }
+          
+          if (trimmed.match(/^[-*_]{3,}$/)) return <hr key={index} className="my-6 border-indigo-100" />;
+          return <div key={index} className="mb-2 leading-relaxed text-slate-700">{parseBold(trimmed)}</div>;
         });
       };
 
       const parseBold = (text) => {
-        const parts = text.split(/(\*\*.*?\*\*)/g);
+        // 清理由于 Token 截断导致结尾残留的单独 ** 符号
+        const cleanText = text.replace(/\*\*\s*$/, '');
+        const parts = cleanText.split(/(\*\*.*?\*\*)/g);
         return parts.map((part, i) => {
           if (part.startsWith('**') && part.endsWith('**')) {
             return <strong key={i} className="font-bold text-indigo-700">{part.slice(2, -2)}</strong>;
@@ -295,32 +307,27 @@
         });
       };
 
-      // 【核心替换】：不再使用浏览器的 PDF 打印，改用 html2canvas 渲染为超清 PNG
       const handleExportImage = () => {
         if (isExporting) return;
         
-        // 1. 展开所有折叠面板，并隐藏不想被截图的按钮
         setShowDetails(true);
         setIsExporting(true);
         
-        // 2. 留出 500 毫秒让 React 完成展开动画及触发高亮样式
         setTimeout(() => {
           const reportElement = document.getElementById('report-container');
           
           if (window.html2canvas && reportElement) {
             window.html2canvas(reportElement, {
-              scale: 2, // 提高 2 倍分辨率，保证图片清晰度
+              scale: 2, 
               useCORS: true,
               backgroundColor: '#ffffff'
             }).then(canvas => {
-              // 3. 将 Canvas 转换为图片并触发下载
               const imgData = canvas.toDataURL('image/png');
               const link = document.createElement('a');
               link.download = `多维缘分报告_${person1.name}_${person2.name}.png`;
               link.href = imgData;
               link.click();
               
-              // 4. 恢复 UI 状态
               setIsExporting(false);
             }).catch(err => {
               console.error('截图失败:', err);
@@ -461,7 +468,6 @@
                 <div className="flex items-center justify-center gap-4">
                   <div className="text-2xl font-light text-slate-300">{person1.name}</div>
                   
-                  {/* 【核心修复位置】：截图瞬间，丢弃截图引擎无法解析的透明渐变属性，强行使用耀眼的实心亮黄色 */}
                   <div className={`text-6xl font-black ${isExporting ? 'text-yellow-400 drop-shadow-md' : 'bg-clip-text text-transparent bg-gradient-to-r from-pink-400 to-yellow-300'}`}>
                     {result.finalScore}%
                   </div>
@@ -481,8 +487,11 @@
 
                 {(showDetails || isExporting) && (
                   <div className="mt-4 grid gap-4">
+                    {/* 【核心修复位置】：加入了 flex flex-col items-center justify-center，并为 span 增加 leading-none 防止基线偏移 */}
                     <div className="p-5 rounded-2xl border border-slate-100 bg-white shadow-sm flex flex-col md:flex-row gap-4 items-center">
-                      <div className="w-20 h-20 rounded-full bg-blue-50 flex items-center justify-center flex-shrink-0"><span className={`text-2xl font-black ${getScoreColor(result.mbti.score)}`}>{result.mbti.score}</span></div>
+                      <div className="w-20 h-20 rounded-full bg-blue-50 flex flex-col items-center justify-center flex-shrink-0">
+                        <span className={`text-2xl font-black leading-none ${getScoreColor(result.mbti.score)}`}>{result.mbti.score}</span>
+                      </div>
                       <div className="flex-1 text-center md:text-left">
                         <h3 className="font-bold text-slate-800">心理学维度 (MBTI) <span className="text-xs px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full ml-2">权重 35%</span></h3>
                         <p className="text-sm text-slate-500 mt-1"><span className="font-semibold text-indigo-600">{result.mbti.p1}</span> 与 <span className="font-semibold text-pink-600">{result.mbti.p2}</span></p>
@@ -490,7 +499,9 @@
                       </div>
                     </div>
                     <div className="p-5 rounded-2xl border border-slate-100 bg-white shadow-sm flex flex-col md:flex-row gap-4 items-center">
-                      <div className="w-20 h-20 rounded-full bg-purple-50 flex items-center justify-center flex-shrink-0"><span className={`text-2xl font-black ${getScoreColor(result.zodiac.score)}`}>{result.zodiac.score}</span></div>
+                      <div className="w-20 h-20 rounded-full bg-purple-50 flex flex-col items-center justify-center flex-shrink-0">
+                        <span className={`text-2xl font-black leading-none ${getScoreColor(result.zodiac.score)}`}>{result.zodiac.score}</span>
+                      </div>
                       <div className="flex-1 text-center md:text-left">
                         <h3 className="font-bold text-slate-800">占星学维度 (四象星座) <span className="text-xs px-2 py-0.5 bg-purple-100 text-purple-700 rounded-full ml-2">权重 25%</span></h3>
                         <p className="text-sm text-slate-500 mt-1"><span className="font-semibold text-indigo-600">{result.zodiac.p1.name}</span> 与 <span className="font-semibold text-pink-600">{result.zodiac.p2.name}</span></p>
@@ -498,7 +509,9 @@
                       </div>
                     </div>
                     <div className="p-5 rounded-2xl border border-slate-100 bg-white shadow-sm flex flex-col md:flex-row gap-4 items-center">
-                      <div className="w-20 h-20 rounded-full bg-red-50 flex items-center justify-center flex-shrink-0"><span className={`text-2xl font-black ${getScoreColor(result.bazi.score)}`}>{result.bazi.score}</span></div>
+                      <div className="w-20 h-20 rounded-full bg-red-50 flex flex-col items-center justify-center flex-shrink-0">
+                        <span className={`text-2xl font-black leading-none ${getScoreColor(result.bazi.score)}`}>{result.bazi.score}</span>
+                      </div>
                       <div className="flex-1 text-center md:text-left">
                         <h3 className="font-bold text-slate-800">东方玄学 (严谨地支) <span className="text-xs px-2 py-0.5 bg-red-100 text-red-700 rounded-full ml-2">权重 25%</span></h3>
                         <p className="text-sm text-slate-500 mt-1">属相 <span className="font-semibold text-indigo-600">{result.bazi.p1.animal}</span> 与 属相 <span className="font-semibold text-pink-600">{result.bazi.p2.animal}</span></p>
